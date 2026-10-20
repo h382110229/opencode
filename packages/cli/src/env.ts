@@ -12,6 +12,16 @@ export const password = Config.Redacted("OPENCODE_PASSWORD").pipe(
   Config.withDefault(undefined),
 )
 
+// OIDC sign-in against an external provider (e.g. OCI-SSO). Leaving OPENCODE_SSO_ISSUER unset turns SSO off and
+// leaves upstream Basic/session auth untouched. The client secret is redacted like the server password.
+export const sso = Config.all({
+  issuer: Config.String("OPENCODE_SSO_ISSUER").pipe(Config.withDefault(undefined)),
+  clientId: Config.String("OPENCODE_SSO_CLIENT_ID").pipe(Config.withDefault(undefined)),
+  clientSecret: Config.Redacted("OPENCODE_SSO_CLIENT_SECRET").pipe(Config.withDefault(undefined)),
+  allowEmails: Config.String("OPENCODE_SSO_ALLOW_EMAILS").pipe(Config.withDefault(undefined)),
+  enforce: Config.String("OPENCODE_SSO_ENFORCE").pipe(Config.withDefault(undefined)),
+})
+
 export function session() {
   return Object.fromEntries(
     Object.entries(process.env).filter(

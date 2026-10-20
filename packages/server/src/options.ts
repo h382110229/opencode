@@ -14,6 +14,15 @@ export const ServerOptions = Schema.Struct({
   hostname: Schema.optional(Schema.String),
   port: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0), Schema.isLessThanOrEqualTo(65_535))),
   password: Schema.optional(Schema.String),
+  sso: Schema.optional(
+    Schema.Struct({
+      issuer: Schema.optional(Schema.String),
+      clientId: Schema.optional(Schema.String),
+      clientSecret: Schema.optional(Schema.String),
+      allowEmails: Schema.optional(Schema.Array(Schema.String)),
+      enforce: Schema.optional(Schema.Boolean),
+    }),
+  ),
   cors: Schema.optional(Schema.Array(Schema.String)),
   simulation: Schema.optional(Schema.Boolean),
   database: Schema.optional(Database.Options),

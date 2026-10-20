@@ -41,8 +41,10 @@ jobs:
           OPENCODE_VERSION: ${{ env.VERSION }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # build.ts wipes its outdir on every run, so each target compiles into its own directory and the
+      # arm64 artifact is moved next to the amd64 one the Dockerfile expects.
       - name: Build linux arm64 musl CLI
-        run: ./packages/cli/script/build.ts --target=opencode-linux-arm64-musl --skip-install
+        run: ./packages/cli/script/build.ts --target=opencode-linux-arm64-musl --skip-install --outdir=/tmp/cli-arm64
         env:
           BUN_COMPILE_RELEASE: bun-v1.4.2
           OPENCODE_VERSION: ${{ env.VERSION }}
@@ -50,6 +52,7 @@ jobs:
 
       - name: Verify build artifacts
         run: |
+          mv /tmp/cli-arm64/cli-linux-arm64-musl packages/cli/dist/
           ls -la packages/cli/dist/cli-linux-x64-baseline-musl/bin/opencode \
                   packages/cli/dist/cli-linux-arm64-musl/bin/opencode
 

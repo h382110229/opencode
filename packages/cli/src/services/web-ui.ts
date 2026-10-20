@@ -3,32 +3,120 @@ import { Effect, FileSystem } from "effect"
 import { HttpServerError, HttpServerRequest, HttpServerResponse } from "effect/http"
 import { createHash } from "node:crypto"
 import { load, type AssetMap, type BrotliMap } from "../app-assets"
+import { ServerSso } from "@opencode/server/sso"
 
 export const handler = Effect.fn("cli.web-ui.handler")(function* (options?: {
   readonly assets?: AssetMap
   readonly brotli?: BrotliMap
+  readonly sso?: ServerSso.Info
 }) {
   const fileSystem = yield* FileSystem.FileSystem
   const assets = options?.assets
     ? Effect.succeed({ files: options.assets, brotli: options.brotli })
     : yield* Effect.cached(load().pipe(Effect.provideService(FileSystem.FileSystem, fileSystem)))
+  const sso = options?.sso
   return <E, R>(api: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>) =>
     Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest
       const url = new URL(request.url, "http://localhost")
-      // Serve the web shell before API authentication so a signed-out browser gets the app's sign-in screen.
+      // SSO sign-in rides ahead of the shell: the callback consumes the authorization code, and an
+      // unauthenticated page load is sent to the identity provider instead of reaching the sign-in screen.
+      if (sso !== undefined && url.pathname === ServerSso.CALLBACK_PATH) return yield* callback(sso, request, url)
       if (
-        url.pathname === "/api" ||
-        url.pathname.startsWith("/api/") ||
-        url.pathname.startsWith("/auth/") ||
-        url.pathname === "/openapi.json"
-      )
+        sso?.enforce === true &&
+        !apiPath(url) &&
+        navigation(request) &&
+        ServerSso.verifySession(sso, request.cookies[ServerSso.SESSION_COOKIE]) === undefined
+      ) {
+        const redirected = redirect(sso, request, url)
+        if (redirected !== undefined) return redirected
+      }
+      // Serve the web shell before API authentication so a signed-out browser gets the app's sign-in screen.
+      if (apiPath(url))
         return yield* api.pipe(
           Effect.catchIf(isRouteNotFound, () => Effect.succeed(HttpServerResponse.empty({ status: 404 }))),
         )
       return yield* assets.pipe(Effect.flatMap((loaded) => serveUI(request, url, loaded.files, loaded.brotli)))
     })
 })
+
+function apiPath(url: URL) {
+  return (
+    url.pathname === "/api" ||
+    url.pathname.startsWith("/api/") ||
+    url.pathname.startsWith("/auth/") ||
+    url.pathname === "/openapi.json"
+  )
+}
+
+// Only page loads are sent to the identity provider; fetches, WebSocket upgrades, and CLI clients keep their
+// 401s, so API behavior stays byte-identical to upstream.
+function navigation(request: HttpServerRequest.HttpServerRequest) {
+  return (
+    request.method === "GET" &&
+    request.headers["sec-fetch-mode"] === "navigate" &&
+    (request.headers["accept"] ?? "").includes("text/html")
+  )
+}
+
+function redirect(sso: ServerSso.Info, request: HttpServerRequest.HttpServerRequest, url: URL) {
+  const origin = ServerSso.origin(request.headers)
+  if (!origin) return undefined
+  const state = ServerSso.issueState(sso, `${url.pathname}${url.search}`)
+  return HttpServerResponse.empty({
+    status: 302,
+    headers: { location: ServerSso.signInURL(sso, origin, state) },
+  })
+}
+
+function callback(sso: ServerSso.Info, request: HttpServerRequest.HttpServerRequest, url: URL) {
+  return Effect.gen(function* () {
+    const origin = ServerSso.origin(request.headers)
+    const state = url.searchParams.get("state") ?? undefined
+    const code = url.searchParams.get("code")
+    if (url.searchParams.get("error") !== null)
+      return failure("The identity provider denied the sign-in request. Return to the start page and try again.")
+    if (!code || !origin)
+      return failure("The sign-in response was incomplete. Return to the start page and try again.")
+    const redirect = ServerSso.verifyState(sso, state)
+    if (redirect === undefined)
+      return failure("The sign-in response did not match this server. Return to the start page and try again.")
+    const idToken = yield* Effect.promise(() =>
+      ServerSso.exchangeCode(sso, code, `${origin}${ServerSso.CALLBACK_PATH}`).catch(() => undefined),
+    )
+    if (idToken === undefined)
+      return failure("The identity provider rejected the sign-in code. It may have expired — try again.")
+    const result = yield* Effect.promise(() =>
+      ServerSso.verifyIdentity(sso, idToken).catch(
+        (): ServerSso.IdentityResult => ({ ok: false, reason: "verify" }),
+      ),
+    )
+    if (!result.ok)
+      return failure(
+        result.reason === "whitelist"
+          ? "This account is not authorized to use this server."
+          : "The identity provider token could not be verified. Return to the start page and try again.",
+      )
+    return HttpServerResponse.empty({
+      status: 302,
+      headers: {
+        location: redirect,
+        "set-cookie": ServerSso.sessionCookie(ServerSso.issueSession(sso, result.identity)),
+      },
+    })
+  })
+}
+
+function failure(message: string) {
+  return HttpServerResponse.text(
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sign-in failed</title></head>` +
+      `<body style="font-family:system-ui;background:#080b0c;color:#e8e8e8;display:grid;place-items:center;height:100vh;margin:0">` +
+      `<main style="text-align:center"><h1 style="font-size:1.1rem;font-weight:600">Sign-in failed</h1>` +
+      `<p style="max-width:32rem;color:#a8a8a8">${message}</p>` +
+      `<p><a style="color:#d6ad5c" href="/">Back to the start page</a></p></main></body></html>`,
+    { status: 403, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
+  )
+}
 
 function serveUI(
   request: HttpServerRequest.HttpServerRequest,

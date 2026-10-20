@@ -37,6 +37,7 @@ import { HttpApiBuilder } from "effect/http-api"
 import { Context, Effect, Layer, Option } from "effect"
 import { Api } from "./api"
 import { ServerAuth } from "./auth"
+import { ServerSso } from "./sso"
 import { CorsConfig } from "./cors"
 import { handlers } from "./handlers"
 import { authorizationLayer } from "./middleware/authorization"
@@ -85,7 +86,7 @@ export function createRoutes(
 ) {
   return makeRoutes(
     options.password
-      ? ServerAuth.Config.configLayer({ password: Option.some(options.password) })
+      ? ServerAuth.Config.configLayer({ password: Option.some(options.password), sso: ServerSso.make(options.sso ?? {}, options.password) })
       : ServerAuth.Config.layer,
     options,
     serviceURLs,

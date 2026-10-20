@@ -9,6 +9,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { brotliCompressSync } from "node:zlib"
 import { WebUi } from "../src/services/web-ui"
+import { ServerSso } from "@opencode/server/sso"
 import { it } from "../../core/test/lib/effect"
 
 const root = await mkdtemp(path.join(tmpdir(), "opencode-web-ui-"))
@@ -225,6 +226,105 @@ describe("web UI", () => {
           const legacy = yield* Effect.promise(() => fetch(`${origin}/assets/missing.js`))
           expect(legacy.status).toBe(200)
           expect(yield* Effect.promise(() => legacy.text())).toContain("embedded")
+        }),
+      ).pipe(Effect.provide(NodeFileSystem.layer)),
+    )
+  })
+})
+
+describe("web UI with SSO", () => {
+  it.live("sends page loads to the identity provider and accepts the session cookie", () =>
+    Effect.gen(function* () {
+      const ssoInput = { issuer: "https://oci-sso.hawkren.online", clientSecret: "client-secret" }
+      const sso = ServerSso.make(ssoInput, "secret")
+      if (!sso) throw new Error("expected an SSO config")
+      const transform = yield* WebUi.handler({ assets: { "index.html": "<html><body>connect</body></html>" }, sso })
+      const server = yield* ServerProcess.start<never, never>(
+        { hostname: "127.0.0.1", port: 0, password: "secret", database: { path: ":memory:" }, sso: ssoInput },
+        undefined,
+        transform,
+      )
+      const origin = HttpServer.formatAddress(server.address)
+      const navigation = { "sec-fetch-mode": "navigate", accept: "text/html" }
+
+      // A page load without a session goes to the provider with a state that returns to the original page.
+      const redirected = yield* Effect.promise(() =>
+        fetch(new URL("/workspace/example?tab=1", origin), { redirect: "manual", headers: navigation }),
+      )
+      expect(redirected.status).toBe(302)
+      const location = new URL(redirected.headers.get("location") ?? "", origin)
+      expect(location.origin + location.pathname).toBe("https://oci-sso.hawkren.online/api/oidc/authorize")
+      expect(location.searchParams.get("client_id")).toBe("opencode")
+      expect(location.searchParams.get("redirect_uri")).toBe(`${origin}${ServerSso.CALLBACK_PATH}`)
+      expect(location.searchParams.get("scope")).toBe("openid email profile")
+      expect(ServerSso.verifyState(sso, location.searchParams.get("state") ?? undefined)).toBe(
+        "/workspace/example?tab=1",
+      )
+
+      // The same page load with a session cookie is served directly.
+      const session = ServerSso.issueSession(sso, { sub: "user-1", email: "huangliang@hawkren.online" })
+      const cookie = `${ServerSso.SESSION_COOKIE}=${session}`
+      const signedIn = yield* Effect.promise(() =>
+        fetch(new URL("/workspace/example", origin), { redirect: "manual", headers: { ...navigation, cookie } }),
+      )
+      expect(signedIn.status).toBe(200)
+      expect(signedIn.headers.get("location")).toBeNull()
+      yield* Effect.promise(() => signedIn.arrayBuffer())
+
+      // API requests are never redirected, and the cookie is what authorizes them.
+      const unauthorized = yield* Effect.promise(() => fetch(new URL("/api/info", origin), { redirect: "manual" }))
+      expect(unauthorized.status).toBe(401)
+      expect(unauthorized.headers.get("location")).toBeNull()
+      const authorized = yield* Effect.promise(() => fetch(new URL("/api/info", origin), { headers: { cookie } }))
+      expect(authorized.status).toBe(200)
+      expect(yield* Effect.promise(() => authorized.json())).toHaveProperty("pid")
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
+  )
+
+  it.live("answers a callback that cannot be matched with a failure page instead of a session", () =>
+    Effect.gen(function* () {
+      const ssoInput = { issuer: "https://oci-sso.hawkren.online", clientSecret: "client-secret" }
+      const sso = ServerSso.make(ssoInput, "secret")
+      if (!sso) throw new Error("expected an SSO config")
+      const transform = yield* WebUi.handler({ assets: { "index.html": "<html><body>connect</body></html>" }, sso })
+      const server = yield* ServerProcess.start<never, never>(
+        { hostname: "127.0.0.1", port: 0, password: "secret", database: { path: ":memory:" }, sso: ssoInput },
+        undefined,
+        transform,
+      )
+      const origin = HttpServer.formatAddress(server.address)
+      const denied = yield* Effect.promise(() =>
+        fetch(new URL(`${ServerSso.CALLBACK_PATH}?error=access_denied`, origin), { redirect: "manual" }),
+      )
+      expect(denied.status).toBe(403)
+      expect(denied.headers.get("set-cookie")).toBeNull()
+      expect(yield* Effect.promise(() => denied.text())).toContain("denied the sign-in request")
+      const unmatched = yield* Effect.promise(() =>
+        fetch(new URL(`${ServerSso.CALLBACK_PATH}?code=stolen`, origin), { redirect: "manual" }),
+      )
+      expect(unmatched.status).toBe(403)
+      expect(yield* Effect.promise(() => unmatched.text())).toContain("did not match")
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
+  )
+
+  test("leaves page loads alone when enforcement is off", async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const sso = ServerSso.make(
+            { issuer: "https://oci-sso.hawkren.online", clientSecret: "client-secret", enforce: false },
+            "secret",
+          )
+          if (!sso) throw new Error("expected an SSO config")
+          const transform = yield* WebUi.handler({ assets: { "index.html": "<html><body>connect</body></html>" }, sso })
+          const http = yield* NodeHttpServer.make(createServer, { host: "127.0.0.1", port: 0 })
+          yield* http.serve(transform(Effect.succeed(HttpServerResponse.empty({ status: 404 }))))
+          const origin = HttpServer.formatAddress(http.address)
+          const response = yield* Effect.promise(() =>
+            fetch(`${origin}/`, { redirect: "manual", headers: { "sec-fetch-mode": "navigate", accept: "text/html" } }),
+          )
+          expect(response.status).toBe(200)
+          expect(yield* Effect.promise(() => response.text())).toContain("connect")
         }),
       ).pipe(Effect.provide(NodeFileSystem.layer)),
     )

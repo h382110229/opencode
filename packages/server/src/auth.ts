@@ -2,6 +2,7 @@ export * as ServerAuth from "./auth"
 
 import { Context, Layer, Option, Redacted } from "effect"
 import { createHmac, timingSafeEqual } from "node:crypto"
+import { ServerSso } from "./sso"
 
 export type DecodedCredentials = {
   readonly username: string
@@ -11,12 +12,13 @@ export type DecodedCredentials = {
 export type Info = {
   readonly password: Option.Option<string>
   readonly username: string
+  readonly sso?: ServerSso.Info | undefined
 }
 
 export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60
 
 export class Config extends Context.Service<Config, Info>()("@opencode/ServerAuthConfig") {
-  static configLayer(input: Pick<Info, "password">) {
+  static configLayer(input: Pick<Info, "password" | "sso">) {
     return Layer.succeed(this, this.of({ ...input, username: "opencode" }))
   }
 

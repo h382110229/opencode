@@ -1,4 +1,5 @@
 import { ServerAuth } from "../auth"
+import { ServerSso } from "../sso"
 import { UnauthorizedError } from "@opencode/protocol/errors"
 import { Authorization } from "@opencode/protocol/middleware/authorization"
 export { Authorization } from "@opencode/protocol/middleware/authorization"
@@ -57,8 +58,25 @@ export function unauthorizedResponse(request: HttpServerRequest.HttpServerReques
 
 export function authorizedRequest(request: HttpServerRequest.HttpServerRequest, config: ServerAuth.Info) {
   return credentialFromRequest(request).pipe(
-    Effect.map((credential) => ServerAuth.authorized(credential, config) || authorizedSessionCookie(request, config)),
+    Effect.map(
+      (credential) =>
+        ServerAuth.authorized(credential, config) ||
+        authorizedSessionCookie(request, config) ||
+        authorizedSsoCookie(request, config),
+    ),
   )
+}
+
+// The SSO session cookie carries the identity from the OIDC callback; the whitelist is re-checked on every
+// request so removing an address from the allow list takes effect before the cookie expires.
+function authorizedSsoCookie(request: HttpServerRequest.HttpServerRequest, config: ServerAuth.Info) {
+  if (!config.sso) return false
+  const token = request.cookies[ServerSso.SESSION_COOKIE]
+  if (!token) return false
+  // Same-site pages on other ports still send this cookie, so only same-origin requests may use it.
+  const origin = request.headers.origin
+  if (origin !== undefined && URL.parse(origin)?.host !== request.headers.host) return false
+  return ServerSso.verifySession(config.sso, token) !== undefined
 }
 
 function authorizedSessionCookie(request: HttpServerRequest.HttpServerRequest, config: ServerAuth.Info) {

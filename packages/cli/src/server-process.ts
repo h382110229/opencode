@@ -12,6 +12,7 @@ import { PersistentPty } from "@opencode/schema/persistent-pty"
 import { HttpServer } from "effect/http"
 import { NetAddress } from "effect/net"
 import { Env } from "./env"
+import { ServerSso } from "@opencode/server/sso"
 import { ServiceConfig } from "./services/service-config"
 import { RetainedImage } from "./services/retained-image"
 import { ServiceRegistration } from "./services/service-registration"
@@ -95,7 +96,20 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
             : randomBytes(32).toString("base64url")
       if (!password) return yield* Effect.fail(new Error("Missing server password"))
       const instanceID = randomUUID()
-      const transform = yield* WebUi.handler()
+      const ssoEnv = yield* Env.sso
+      const ssoInput: ServerSso.Input = {
+        issuer: ssoEnv.issuer,
+        clientId: ssoEnv.clientId,
+        clientSecret: ssoEnv.clientSecret === undefined ? undefined : Redacted.value(ssoEnv.clientSecret),
+        allowEmails: ssoEnv.allowEmails
+          ?.split(",")
+          .map((entry) => entry.trim())
+          .filter((entry) => entry !== ""),
+        enforce:
+          ssoEnv.enforce === undefined ? undefined : !["0", "false", "no"].includes(ssoEnv.enforce.toLowerCase()),
+      }
+      const sso = ServerSso.make(ssoInput, password)
+      const transform = yield* WebUi.handler({ sso })
       const remote = { urls: [] as ReadonlyArray<string> }
       const launch = start(
         {
@@ -108,6 +122,7 @@ const processEffect = Effect.fnUntraced(function* (options: Options) {
           port,
           cors: options.cors ?? config.cors,
           password,
+          sso: ssoInput,
           pty: { handoff },
           simulation: truthy(process.env.OPENCODE_SIMULATE),
           database: {

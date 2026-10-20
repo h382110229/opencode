@@ -65,10 +65,11 @@ jobs:
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
             -f packages/cli/Dockerfile \
+            --no-cache \
             -t "$IMAGE:latest" \
             -t "$IMAGE:$VERSION" \
             --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             --label "org.opencontainers.image.version=$VERSION" \
             --label "org.opencontainers.image.revision=${{ github.sha }}" \
             --push \
-            .
+            packages/cli

@@ -32,9 +32,10 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      # The Dockerfile copies the two musl binaries; everything else is upstream's own packaging.
-      - name: Build linux x64 musl CLI
-        run: ./packages/cli/script/build.ts --target=opencode-linux-x64-musl
+      # The Dockerfile copies exactly two binaries: amd64 uses the baseline (no-AVX2) musl build,
+      # arm64 uses the regular musl build.
+      - name: Build linux x64 baseline musl CLI
+        run: ./packages/cli/script/build.ts --target=opencode-linux-x64-baseline-musl
         env:
           BUN_COMPILE_RELEASE: bun-v1.4.2
           OPENCODE_VERSION: ${{ env.VERSION }}
@@ -46,6 +47,11 @@ jobs:
           BUN_COMPILE_RELEASE: bun-v1.4.2
           OPENCODE_VERSION: ${{ env.VERSION }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify build artifacts
+        run: |
+          ls -la packages/cli/dist/cli-linux-x64-baseline-musl/bin/opencode \
+                  packages/cli/dist/cli-linux-arm64-musl/bin/opencode
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0

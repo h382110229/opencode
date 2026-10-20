@@ -32,23 +32,20 @@ jobs:
         with:
           bun-version: 1.4.2
 
-      # The Dockerfile copies exactly two binaries: amd64 uses the baseline (no-AVX2) musl build,
-      # arm64 uses the regular musl build.
+      # BUN_COMPILE_RELEASE is deliberately unset: it makes build.ts fetch bun's runtime metadata from
+      # the unauthenticated GitHub API (rate-limited on shared runners). Without it Bun cross-compiles the
+      # requested musl target with its own bundled runtime.
       - name: Build linux x64 baseline musl CLI
         run: ./packages/cli/script/build.ts --target=opencode-linux-x64-baseline-musl
         env:
-          BUN_COMPILE_RELEASE: bun-v1.4.2
           OPENCODE_VERSION: ${{ env.VERSION }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # build.ts wipes its outdir on every run, so each target compiles into its own directory and the
       # arm64 artifact is moved next to the amd64 one the Dockerfile expects.
       - name: Build linux arm64 musl CLI
         run: ./packages/cli/script/build.ts --target=opencode-linux-arm64-musl --skip-install --outdir=/tmp/cli-arm64
         env:
-          BUN_COMPILE_RELEASE: bun-v1.4.2
           OPENCODE_VERSION: ${{ env.VERSION }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify build artifacts
         run: |

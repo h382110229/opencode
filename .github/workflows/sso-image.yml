@@ -50,8 +50,8 @@ jobs:
       - name: Verify build artifacts
         run: |
           mv /tmp/cli-arm64/cli-linux-arm64-musl packages/cli/dist/
-          ls -la packages/cli/dist/cli-linux-x64-baseline-musl/bin/opencode \
-                  packages/cli/dist/cli-linux-arm64-musl/bin/opencode
+          ls -la packages/cli/dist/*/bin/opencode \
+                  packages/cli/dist/*/bin/opencode
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
